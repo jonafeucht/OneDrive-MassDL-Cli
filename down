@@ -15,9 +15,12 @@ conn = sqlite3.connect('data.db', timeout=sys.float_info.max)
 cur = conn.cursor()
 
 parser = argparse.ArgumentParser()
-parser.add_argument('URL', help='https://onedrive.live.com/?authkey=XXXXX&id=XXXXX&cid=XXXXX')
-parser.add_argument('-f', '--force-dirs', action='store_true', help='crawls through directories even if they are unchanged')
+parser.add_argument(
+    'URL', help='https://onedrive.live.com/?authkey=XXXXX&id=XXXXX&cid=XXXXX')
+parser.add_argument('-f', '--force-dirs', action='store_true',
+                    help='crawls through directories even if they are unchanged')
 args = parser.parse_args()
+
 
 def download_onedrive_folder(authkey, id, cid, folder):
 
@@ -27,7 +30,7 @@ def download_onedrive_folder(authkey, id, cid, folder):
         'authKey': authkey,
         'id': id,
         'cid': cid,
-        'ps': 2500 # max page size
+        'ps': 2500  # max page size
     }
 
     headers = {
@@ -36,41 +39,63 @@ def download_onedrive_folder(authkey, id, cid, folder):
     }
 
     for count in itertools.count(data['ps'], data['ps']):
-        response = requests.get('https://skyapi.onedrive.live.com/API/2/GetItems', params=data, headers=headers)
+        response = requests.get(
+            'https://skyapi.onedrive.live.com/API/2/GetItems', params=data, headers=headers)
         response.raise_for_status()
         for item in response.json()['items']:
             if 'folder' in item:
                 for child in item['folder']['children']:
-
-                    # check etag if child is a folder and force-dirs is true or if child is not a folder
-                    if (child['itemType'] == 32 and not args.force_dirs) or child['itemType'] != 32:
+                    if child['itemType'] == 32:
+                        path = folder + '/' + \
+                            item['name'] + '/' + child['name']
+                        os.makedirs(path, exist_ok=True)
+                        print(path)
+                        download_onedrive_folder(
+                            data['authKey'], child['id'], child['resourcePartitionCid'], path)
+                    elif child['itemType'] != 32:
                         # check if local copy is up to date
-                        cur.execute('SELECT etag FROM download WHERE id = ?', (child['id'],))
+                        cur.execute(
+                            'SELECT etag FROM download WHERE id = ?', (child['id'],))
                         rows = cur.fetchall()
                         if len(rows) == 1 and rows[0][0] == child['eTag']:
                             continue
 
-                    # if folder
-                    if child['itemType'] == 32:
-                        path = folder + '/' + item['name'] + '/' + child['name']
-                        os.makedirs(path, exist_ok=True)
-                        print(path)
-                        download_onedrive_folder(data['authKey'], child['id'], child['resourcePartitionCid'], path)
-                    # if file
-                    elif child['itemType'] == 1:
-                        path = folder + '/' + child['name']
-                        if 'extension' in child:
-                            path += child['extension']
-                        print(path)
-                        response = requests.get(child['urls']['download'])
-                        response.raise_for_status()
-                        with open(path, 'wb') as f:
-                            f.write(response.content)
-                    else:
-                        raise Exception('Unknown itemType ' + str(item['itemType']))
+                        # if folder
+                        if child['itemType'] == 32:
+                            path = folder + '/' + \
+                                item['name'] + '/' + child['name']
+                            os.makedirs(path, exist_ok=True)
+                            print(path)
+                            download_onedrive_folder(
+                                data['authKey'], child['id'], child['resourcePartitionCid'], path)
+                        # if file
+                        elif child['itemType'] == 1:
+                            path = folder + '/' + child['name']
+                            if 'extension' in child:
+                                path += child['extension']
+                            print(path)
+                            response = requests.get(child['urls']['download'])
+                            response.raise_for_status()
+                            with open(path, 'wb') as f:
+                                f.write(response.content)
+                        # if image
+                        elif child['itemType'] == 3:
+                            path = folder + '/' + child['name']
+                            if 'extension' in child:
+                                path += child['extension']
+                            print(path)
+                            response = requests.get(child['urls']['download'])
+                            response.raise_for_status()
+                            with open(path, 'wb') as f:
+                                f.write(response.content)
+                        else:
+                            # Add a default case for handling new itemType values
+                            print(
+                                f"Unknown itemType {child['itemType']} encountered. Skipping...")
 
                     # store Etag
-                    cur.execute('INSERT OR REPLACE INTO download(id, etag) VALUES(?,?)', (child['id'], child['eTag']))
+                    cur.execute(
+                        'INSERT OR REPLACE INTO download(id, etag) VALUES(?,?)', (child['id'], child['eTag']))
                     conn.commit()
 
                 if count < item['folder']['childCount']:
@@ -93,4 +118,3 @@ data = {
     'cid': params['cid']
 }
 download_onedrive_folder(data['authKey'], data['id'], data['cid'], 'downloads')
-
